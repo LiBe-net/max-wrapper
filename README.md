@@ -80,7 +80,7 @@ GitHub additionally runs HACS validation and the same build test.
 
 ## More information and support
 
-Visit [www.libe.net](http://www.libe.net) for more information.
+Visit [www.libe.net/ha-max](https://www.libe.net/ha-max) for more information.
 
 <a href="https://www.buymeacoffee.com/libe.net" rel="nofollow">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px; width: 217px; max-width: 100%;">
