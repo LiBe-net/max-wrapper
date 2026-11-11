@@ -88,7 +88,7 @@ Visit [www.libe.net/ha-max](https://www.libe.net/ha-max) for more information.
 
 ## Version
 
-Current version: **1.0.0**
+Current version: **1.0.1**
 
 ## License
 

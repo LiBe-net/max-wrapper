@@ -139,6 +139,34 @@ function _getHAMaximizeFrame() {
   return fallback;
 }
 
+/**
+ * Moves the maximized container into the browser's top layer (Popover API).
+ * Since HA 2026.11 <home-assistant-main> has `isolation: isolate`, so a
+ * position:fixed element inside the dashboard can no longer rise above HA's
+ * own layers with z-index. The top layer is above every stacking context and
+ * positioned relative to the viewport, regardless of transform, filter or
+ * isolation on ancestors. HA's dialogs, toasts and tooltips also use the top
+ * layer; they open later and therefore stay above the maximized card.
+ * Returns false if the API is unavailable (z-index fallback stays active).
+ */
+function _enterTopLayer(el) {
+  if (typeof el.showPopover !== 'function') return false;
+  try {
+    el.setAttribute('popover', 'manual');
+    el.showPopover();
+    return true;
+  } catch (_) {
+    el.removeAttribute('popover');
+    return false;
+  }
+}
+
+function _leaveTopLayer(el) {
+  if (!el?.hasAttribute('popover')) return;
+  try { if (el.matches(':popover-open')) el.hidePopover(); } catch (_) {}
+  el.removeAttribute('popover');
+}
+
 // Tracks all mounted instances so when one card maximizes, others hide their toggle button.
 const _fswRegistry = new Set();
 
@@ -211,8 +239,17 @@ class MaximizeWrapperCard extends HTMLElement {
           background: var(--lovelace-background, var(--primary-background-color));
           overflow: hidden;
         }
+        /* While in the top layer: neutralise the browser's popover defaults
+           (inset:0, margin:auto, border, color:CanvasText). Position, size,
+           padding and background are set inline while maximized. */
+        #fs-container[popover] {
+          inset: auto;
+          margin: 0;
+          border: 0;
+          color: inherit;
+        }
 
-        /* Button is inside #fs-container but outside #card-inner.                  
+        /* Button is inside #fs-container but outside #card-inner.
            In maximized state it sits exactly at the top-right corner of #card-inner.
            #card-inner has overflow:hidden so there is no scrollbar on #card-inner;
            the child card scrolls internally → no scrollbar ever overlaps the button. */
@@ -349,15 +386,15 @@ class MaximizeWrapperCard extends HTMLElement {
           padding:      '0',
           transition:   'none',
         });
+        _enterTopLayer(fsContainer);
 
         // 2) Force synchronous reflow so the browser registers start state
         void fsContainer.offsetHeight;
 
-        // Measure the lovelace footer (if present) and force it to paint above our card.
-        // Root cause: position:fixed inside a shadow DOM participates in the BROWSER's root
-        // stacking context, so it paints above all non-fixed elements regardless of z-index
-        // on elements in other shadow roots. Fix: also force the footer to position:fixed
-        // with z-index:9999, putting it in the root stacking context above our z-index:4 card.
+        // Measure the lovelace footer (if present) and pin it to the bottom of the viewport.
+        // The maximized card ends above the footer (height minus footerH), so the footer
+        // stays visible. z-index:9999 keeps it above the backdrop (and above the card
+        // in the z-index fallback without top layer).
         const footer = _findHAFooter();
         let footerH = 0;
         if (footer) {
@@ -385,10 +422,13 @@ class MaximizeWrapperCard extends HTMLElement {
 
         // Inject a full-viewport backdrop so other cards cannot be seen
         // through the footer gap (or during the open animation).
-        // z-index:3 — behind our maximize card (z-index:4) but above normal flow.
+        // It lives in our shadow root, i.e. inside HA's stacking context:
+        // z-index:3 is above the dashboard but below HA's header, sidebar and
+        // the pinned footer. (Appended to document.body it would cover the
+        // whole HA UI since HA 2026.11 isolates <home-assistant-main>.)
         const backdrop = document.createElement('div');
         backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:3;background:var(--lovelace-background, var(--primary-background-color));pointer-events:none;';
-        document.body.appendChild(backdrop);
+        this.shadowRoot.insertBefore(backdrop, fsContainer);
         this._fsBackdrop = backdrop;
 
         // 3) Enable transition and animate to maximize
@@ -453,9 +493,12 @@ class MaximizeWrapperCard extends HTMLElement {
 
         fsContainer.classList.remove('maximized');
 
-        const cleanup = () => {
+        const cleanup = (e) => {
+          // transitionend bubbles up from the child card (e.g. hover effects)
+          if (e && e.target !== fsContainer) return;
           fsContainer.removeEventListener('transitionend', cleanup);
           // Return element to normal flow
+          _leaveTopLayer(fsContainer);
           ['position','top','left','width','height','zIndex','boxSizing',
            'background','overflow','borderRadius','padding','transition'].forEach(
             p => fsContainer.style.removeProperty(p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()))
@@ -533,6 +576,7 @@ class MaximizeWrapperCard extends HTMLElement {
       const fsContainer = this.shadowRoot?.getElementById('fs-container');
       if (fsContainer?.classList.contains('maximized')) {
         this._stopLayoutWatch();
+        _leaveTopLayer(fsContainer);
         fsContainer.classList.remove('maximized');
         this.classList.remove('maximized');
         ['position','top','left','width','height','z-index','box-sizing',
@@ -597,6 +641,7 @@ class MaximizeWrapperCard extends HTMLElement {
       this._fsPlaceholder = null;
     }
 
+    _leaveTopLayer(fsContainer);
     fsContainer.classList.remove('maximized');
     ['position','top','left','width','height','z-index','box-sizing',
      'background','overflow','border-radius','padding','transition'].forEach(
@@ -729,6 +774,7 @@ class MaximizeWrapperCard extends HTMLElement {
     if (this.classList.contains('maximized')) this._notifyOthers(false);
     // Clean up maximize state if the card is removed from the DOM
     const fsContainer = this.shadowRoot?.getElementById('fs-container');
+    if (fsContainer) _leaveTopLayer(fsContainer);
     if (fsContainer?.classList.contains('maximized')) {
       fsContainer.classList.remove('maximized');
       ['position','top','left','width','height','z-index','box-sizing',
